@@ -1,0 +1,310 @@
+---
+title: "ST3131 assignment"
+output: html_document
+date: "2026-03-29"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE)
+```
+
+```{r}
+setwd("C:\\Users\\mxsng\\OneDrive - National University of Singapore\\Desktop\\Min Xuan\\nus\\y2s2\\st3131\\assignment")
+data = read.csv("hdb-resale-July-2020.csv")
+```
+
+# Replace features using domain knowledge
+
+```{r}
+## map the towns to regions CCR, RCR, OCR
+
+library(dplyr)
+unique(data$town)
+
+CCR = c("BUKIT TIMAH", "CENTRAL AREA")
+
+RCR = c("BISHAN", "GEYLANG", "KALLANG/WHAMPOA", "MARINE PARADE", "QUEENSTOWN", "TOA PAYOH")
+
+OCR = c("ANG MO KIO", "BEDOK", "BUKIT BATOK", "BUKIT MERAH", "BUKIT PANJANG", "CHOA CHU KANG", "CLEMENTI", "HOUGANG", "JURONG EAST", "JURONG WEST", "PASIR RIS", "PUNGGOL", "SEMBAWANG", "SENGKANG", "SERANGOON", "TAMPINES", "WOODLANDS", "YISHUN")
+
+data <- data %>%
+  mutate(region = case_when(
+    town %in% CCR ~ "CCR",
+    town %in% RCR ~ "RCR",
+    town %in% OCR ~ "OCR"
+  ))
+
+unique(data$region)
+```
+
+```{r}
+## map the remaining lease to flat age
+
+library(stringr)
+
+data <- data %>%
+  mutate(
+    y = as.numeric(str_extract(remaining_lease, "\\d+(?=\\s*years?)")), 
+    m = as.numeric(str_extract(remaining_lease, "\\d+(?=\\s*months?)")),
+    
+    decimal_remaining = coalesce(y, 0) + (coalesce(m, 0) / 12),
+    
+    flat_age = 99 - decimal_remaining
+  ) %>%
+  mutate(flat_age = round(flat_age, 2))
+```
+
+```{r}
+# Group storey_range together
+unique(data$storey_range)
+
+low = c("01 TO 03", "04 TO 06", "07 TO 09", "10 TO 12", "13 TO 15")
+
+mid = c("16 TO 18", "19 TO 21", "22 TO 24", "25 TO 27", "28 TO 30")
+
+high = c("31 TO 33", "34 TO 36", "37 TO 39", "40 TO 42", "49 TO 51")
+
+data <- data %>%
+  mutate(storey = case_when(
+    storey_range %in% low ~ "low",
+    storey_range %in% mid ~ "mid",
+    storey_range %in% high ~ "high"
+  ))
+
+unique(data$storey)
+```
+
+```{r}
+# Group flat_models
+unique(data$flat_model)
+
+standard = c("Standard", "Improved", "New Generation", "Model A", "Simplified", "Model A2")
+
+premium = c("Premium Apartment", "Premium Apartment Loft", "DBSS")
+
+large = c("Maisonette", "Model A-Maisonette", "Apartment", "Adjoined flat", "Multi Generation")
+
+rare = c("Terrace", "Type S1", "Type S2")
+
+data <- data %>%
+  mutate(flat_model_group = case_when(
+    flat_model %in% standard ~ "standard",
+    flat_model %in% premium ~ "premium",
+    flat_model %in% large ~ "large",
+    flat_model %in% rare ~ "rare"
+  ))
+
+unique(data$flat_model_group)
+```
+
+```{r}
+## Order for storey_range
+data$storey <- factor(data$storey, levels = c("low", "mid", "high"))
+
+## Order for flat_type
+flat_type_order <- c("1 ROOM", "2 ROOM", "3 ROOM", "4 ROOM", "5 ROOM", "EXECUTIVE", "MULTI-GENERATION")
+data$flat_type <- factor(data$flat_type, levels = flat_type_order)
+
+## Order for region
+data$region <- factor(data$region, levels = c("OCR", "RCR", "CCR"))
+
+## Order flat_model_group as factor
+data$flat_model_group <- factor(data$flat_model_group, levels = c("standard", "premium", "large", "rare"))
+```
+
+```{r}
+length(unique(data$block)) ##1187 unique blocks for dataset with 2456 obs
+## merge the blocks into groups with the same hundreds place to have fewer unique values
+data$block_group = floor(as.numeric(gsub("[a-zA-Z]+$", "", data$block)) / 100)
+sort(unique(data$block_group))
+
+data$block_group = factor(data$block_group)
+```
+
+```{r}
+attach(data)
+```
+
+# Part 1: EDA
+
+## summary statistics and visualising relationships between resale_price and regressors
+
+```{r}
+summary(resale_price)
+sd(resale_price)
+hist(resale_price)
+cor(resale_price, floor_area_sqm)
+cor(resale_price, flat_age)
+
+plot(floor_area_sqm, resale_price, main="Scatterplot of resale_price against floor_area_sqm")
+abline(lm(resale_price~floor_area_sqm), col="red", lwd = 2)
+
+plot(flat_age, resale_price, main="Scatterplot of resale_price against flat_age")
+abline(lm(resale_price~flat_age), col="red", lwd = 2)
+
+boxplot(resale_price~region, main="Boxplot of resale_price~region")
+
+boxplot(resale_price~block_group, main="Boxplot of resale_price~block_group")
+
+par(mar = c(10, 4, 4, 2))
+boxplot(resale_price~flat_type, main="Boxplot of resale_price~flat_type", xlab="", las=3)
+
+boxplot(resale_price~storey, main="Boxplot of resale_price~storey")
+
+par(mar = c(10, 4, 4, 2))
+boxplot(resale_price~flat_model_group, main="Boxplot of resale_price~flat_model_group")
+```
+
+## boxcox to suggest transformation for resale_price
+
+```{r}
+library(MASS)
+B = boxcox(lm(resale_price~region+block_group+flat_type+storey+floor_area_sqm+flat_model_group+flat_age, data), lambda=seq(-2, 2, 0.5))
+B$x[which(B$y == max(B$y))]
+```
+
+## visualising relationships between log(resale_price) and regressors after transforming resale_price to log(resale_price)
+
+```{r}
+hist(log(resale_price))
+cor(log(resale_price), floor_area_sqm)
+cor(log(resale_price), flat_age)
+
+plot(floor_area_sqm, log(resale_price), main="Scatterplot of log(resale_price) against floor_area_sqm")
+abline(lm(log(resale_price)~floor_area_sqm), col="red", lwd = 2)
+
+plot(flat_age, log(resale_price), main="Scatterplot of log(resale_price) against flat_age")
+abline(lm(log(resale_price)~flat_age), col="red", lwd = 2)
+
+boxplot(log(resale_price)~region, main="Boxplot of log(resale_price)~region")
+
+boxplot(log(resale_price)~block_group, main="Boxplot of log(resale_price)~block_group")
+
+par(mar = c(10, 4, 4, 2))
+boxplot(log(resale_price)~flat_type, main="Boxplot of log(resale_price)~flat_type", xlab="", las=3)
+
+boxplot(log(resale_price)~storey, main="Boxplot of log(resale_price)~storey")
+
+par(mar = c(10, 4, 4, 2))
+boxplot(log(resale_price)~flat_model_group, main="Boxplot of log(resale_price)~flat_model_group")
+```
+
+# Part 2 (initial model)
+
+```{r}
+
+model1 = lm(log(resale_price)~region+block_group+flat_type+storey+floor_area_sqm+flat_model_group+flat_age, data)
+summary(model1)
+anova(model1)
+```
+
+## residual analysis for model1
+
+```{r}
+sr1 = rstandard(model1)
+
+hist(sr1)
+qqnorm(sr1)
+qqline(sr1)
+
+plot(floor_area_sqm, sr1, main="Scatterplot of sr1 against floor_area_sqm")
+abline(h=0, col="red", lwd = 2)
+
+plot(flat_age, sr1, main="Scatterplot of sr1 against flat_age")
+abline(h=0, col="red", lwd = 2)
+
+boxplot(sr1~region, main="Boxplot of sr1~region")
+abline(h=0, col="red", lwd = 2)
+
+boxplot(sr1~block_group, main="Boxplot of sr1~block_group")
+abline(h=0, col="red", lwd = 2)
+
+par(mar = c(10, 4, 4, 2))
+boxplot(sr1~flat_type, main="Boxplot of sr1~flat_type", xlab="", las=3)
+abline(h=0, col="red", lwd = 2)
+
+boxplot(sr1~storey, main="Boxplot of sr1~storey")
+abline(h=0, col="red", lwd = 2)
+
+par(mar = c(10, 4, 4, 2))
+boxplot(sr1~flat_model_group, main="Boxplot of sr1~flat_model_group")
+abline(h=0, col="red", lwd = 2)
+```
+
+## outlier and influential point detection
+
+```{r}
+which(sr1 > 3 | sr1 < -3)
+length(which(sr1 > 3 | sr1 < -3))
+
+which(cooks.distance(model1)>1)
+length(which(cooks.distance(model1)>1))
+```
+
+# Part 2 (final model)
+
+## check multicollinearity using VIF
+
+```{r}
+library(car)
+vif(model1)
+```
+
+## check model adjusted R-squared after dropping flat_type
+
+```{r}
+model2 = lm(log(resale_price)~region+block_group+storey+floor_area_sqm+flat_model_group+flat_age, data)
+summary(model2)
+```
+
+## check multicollinearity after dropping flat_type using VIF
+
+```{r}
+vif(model2)
+```
+
+## WLS to handle variance heteroscedasticity
+
+```{r}
+var_model = lm(abs(residuals(model2))~region+block_group+storey+floor_area_sqm+flat_model_group+flat_age, data)
+weights_wls = 1 / (fitted(var_model)^2)
+
+model3 = lm(log(resale_price)~region+block_group+storey+floor_area_sqm+flat_model_group+flat_age, data, weights = weights_wls)
+summary(model3)
+anova(model3)
+```
+
+## residual analysis for model3
+
+```{r}
+sr3 = rstandard(model3)
+
+hist(sr3)
+qqnorm(sr3)
+qqline(sr3)
+
+plot(floor_area_sqm, sr3, main="Scatterplot of sr3 against floor_area_sqm")
+abline(h=0, col="red", lwd = 2)
+
+plot(flat_age, sr3, main="Scatterplot of sr3 against flat_age")
+abline(h=0, col="red", lwd = 2)
+
+plot(sr3~region, main="Boxplot of sr3~region")
+abline(h=0, col="red", lwd = 2)
+
+plot(sr3~block_group, main="Boxplot of sr3~block_group")
+abline(h=0, col="red", lwd = 2)
+
+plot(sr3~storey, main="Boxplot of sr3~storey")
+abline(h=0, col="red", lwd = 2)
+
+par(mar = c(10, 4, 4, 2))
+plot(sr3~flat_model_group, main="Boxplot of sr3~flat_model_group")
+abline(h=0, col="red", lwd = 2)
+```
+
+## Backward elimination using AIC for variable selection
+
+```{r}
+stepAIC(model3, direction="backward")$anova
+```
